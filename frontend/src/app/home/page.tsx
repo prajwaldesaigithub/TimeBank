@@ -18,6 +18,8 @@ import {
   Target
 } from "lucide-react";
 import toast from "react-hot-toast";
+import api from "@/lib/api";
+import { parseJsonArray } from "@/lib/utils";
 
 interface User {
   id: string;
@@ -58,18 +60,19 @@ export default function HomePage() {
       if (selectedSkills.length > 0) params.append("skills", selectedSkills.join(","));
       params.append("sortBy", sortBy);
 
-      const response = await fetch(`/api/discovery/search?${params}`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setUsers(data.users);
-      }
+      const data = await api.get(`/api/discovery/search?${params}`);
+      // Parse JSON strings to arrays for SQLite compatibility
+      const parsedUsers = (data.users || []).map((user: any) => ({
+        ...user,
+        profile: user.profile ? {
+          ...user.profile,
+          skills: parseJsonArray(user.profile.skills),
+        } : null,
+      }));
+      setUsers(parsedUsers);
     } catch (error) {
       console.error("Failed to fetch users:", error);
+      toast.error("Failed to load users");
     } finally {
       setLoading(false);
     }
@@ -77,18 +80,19 @@ export default function HomePage() {
 
   const fetchRecommendations = async () => {
     try {
-      const response = await fetch("/api/discovery/recommendations", {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setRecommendations(data.users);
-      }
+      const data = await api.get("/api/discovery/recommendations");
+      // Parse JSON strings to arrays for SQLite compatibility
+      const parsedRecommendations = (data.users || []).map((user: any) => ({
+        ...user,
+        profile: user.profile ? {
+          ...user.profile,
+          skills: parseJsonArray(user.profile.skills),
+        } : null,
+      }));
+      setRecommendations(parsedRecommendations);
     } catch (error) {
       console.error("Failed to fetch recommendations:", error);
+      toast.error("Failed to load recommendations");
     }
   };
 
@@ -315,9 +319,14 @@ export default function HomePage() {
                     <div className="flex space-x-2">
                       <button 
                         className="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.stopPropagation();
-                          toast.success("Added to favorites!");
+                          try {
+                            await api.post(`/api/connections/${user.id}/follow`);
+                            toast.success("Following user");
+                          } catch (error: any) {
+                            toast.error(error.message || "Failed to follow user");
+                          }
                         }}
                       >
                         <Heart className="w-4 h-4 text-slate-300" />

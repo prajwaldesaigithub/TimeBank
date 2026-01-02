@@ -18,6 +18,7 @@ import messageRoutes from "./routes/messages";
 import ratingRoutes from "./routes/ratings";
 import transactionRoutes from "./routes/transactions";
 import discoveryRoutes from "./routes/discovery";
+import connectionsRoutes from "./routes/connections";
 import { setupSocketIO } from "./lib/socket";
 
 dotenv.config();
@@ -142,6 +143,9 @@ app.use("/transactions", transactionRoutes);
 
 app.use("/api/discovery", discoveryRoutes);
 app.use("/discovery", discoveryRoutes);
+
+app.use("/api/connections", connectionsRoutes);
+app.use("/connections", connectionsRoutes);
 
 // 404 handler
 app.use("*", (_req: Request, res: Response) => {

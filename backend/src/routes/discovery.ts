@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { authMiddleware, AuthRequest } from '../middleware/auth';
 import { z } from 'zod';
+import { parseProfileArrays } from '../lib/parseProfile';
 
 const router = Router();
 import { getPrisma } from '../lib/prisma';
@@ -49,14 +50,9 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
       ];
     }
 
-    if (validatedData.skills && validatedData.skills.length > 0) {
-      whereClause.profile = {
-        ...whereClause.profile,
-        skills: {
-          hasSome: validatedData.skills
-        }
-      };
-    }
+    // Note: SQLite stores skills as JSON string, so we'll filter in JavaScript after fetching
+    // Store skills filter for post-processing
+    const skillsFilter = validatedData.skills && validatedData.skills.length > 0 ? validatedData.skills : null;
 
     if (validatedData.location) {
       whereClause.profile = {
@@ -90,7 +86,7 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
         break;
     }
 
-    const [users, totalCount] = await Promise.all([
+    const [users, totalCountResult] = await Promise.all([
       prisma.user.findMany({
         where: whereClause,
         include: {
@@ -109,23 +105,36 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
         },
         orderBy,
         skip,
-        take: limit
+        take: limit * 2 // Fetch more to account for filtering
       }),
       prisma.user.count({
         where: whereClause
       })
     ]);
 
+    // Filter by skills if needed (SQLite stores as JSON string)
+    let filteredUsers = users;
+    if (skillsFilter && skillsFilter.length > 0) {
+      filteredUsers = users.filter(user => {
+        if (!user.profile) return false;
+        const userSkills = parseProfileArrays(user.profile).skills;
+        return skillsFilter.some(skill => userSkills.includes(skill));
+      });
+    }
+
+    // Limit to requested amount after filtering
+    filteredUsers = filteredUsers.slice(0, limit);
+
     // Format users for display
-    const formattedUsers = users.map(user => ({
+    const formattedUsers = filteredUsers.map(user => ({
       id: user.id,
       name: user.name,
       reputation: user.reputation,
       lastActiveAt: user.lastActiveAt,
-      profile: user.profile ? {
+      profile: user.profile ? parseProfileArrays({
         ...user.profile,
         trustBadge: getTrustBadge(user.profile.ratingAvg || 0, user.profile.totalRatings || 0)
-      } : null
+      }) : null
     }));
 
     res.json({
@@ -133,8 +142,8 @@ router.get('/search', authMiddleware, async (req: AuthRequest, res) => {
       pagination: {
         page,
         limit,
-        total: totalCount,
-        pages: Math.ceil(totalCount / limit)
+        total: filteredUsers.length, // Approximate after filtering
+        pages: Math.ceil(filteredUsers.length / limit)
       }
     });
   } catch (error) {
@@ -172,15 +181,15 @@ router.get('/recommendations', authMiddleware, async (req: AuthRequest, res) => 
       return res.json({ users: [] });
     }
 
-    // Get users with similar skills
-    const skillRecommendations = await prisma.user.findMany({
+    // Parse current user's skills from JSON string
+    const currentUserSkills = parseProfileArrays(currentUser.profile).skills;
+    
+    // Get users with similar skills (filter in JavaScript since SQLite stores as JSON string)
+    const allUsers = await prisma.user.findMany({
       where: {
         id: { not: userId },
         profile: {
-          isComplete: true,
-          skills: {
-            hasSome: currentUser.profile.skills
-          }
+          isComplete: true
         }
       },
       include: {
@@ -197,9 +206,16 @@ router.get('/recommendations', authMiddleware, async (req: AuthRequest, res) => 
           }
         }
       },
-      take: 10,
+      take: 50, // Fetch more to filter
       orderBy: { reputation: 'desc' }
     });
+    
+    // Filter users with similar skills
+    const skillRecommendations = allUsers.filter((user: any) => {
+      if (!user.profile) return false;
+      const userSkills = parseProfileArrays(user.profile).skills;
+      return currentUserSkills.some((skill: string) => userSkills.includes(skill));
+    }).slice(0, 10);
 
     // Get users in same location
     const locationRecommendations = await prisma.user.findMany({
@@ -255,9 +271,25 @@ router.get('/recommendations', authMiddleware, async (req: AuthRequest, res) => 
       take: 5,
       orderBy: { profile: { ratingAvg: 'desc' } }
     });
+    
+    // Parse profile arrays for all recommendation types
+    const parsedSkillRecommendations = skillRecommendations.map((user: any) => ({
+      ...user,
+      profile: user.profile ? parseProfileArrays(user.profile) : null
+    }));
+    
+    const parsedLocationRecommendations = locationRecommendations.map((user: any) => ({
+      ...user,
+      profile: user.profile ? parseProfileArrays(user.profile) : null
+    }));
+    
+    const parsedTopRatedUsers = topRatedUsers.map((user: any) => ({
+      ...user,
+      profile: user.profile ? parseProfileArrays(user.profile) : null
+    }));
 
     // Combine and deduplicate recommendations
-    const allRecommendations = [...skillRecommendations, ...locationRecommendations, ...topRatedUsers];
+    const allRecommendations = [...parsedSkillRecommendations, ...parsedLocationRecommendations, ...parsedTopRatedUsers];
     const uniqueRecommendations = allRecommendations.filter((user, index, self) => 
       index === self.findIndex(u => u.id === user.id)
     );
@@ -268,10 +300,10 @@ router.get('/recommendations', authMiddleware, async (req: AuthRequest, res) => 
       name: user.name,
       reputation: user.reputation,
       lastActiveAt: user.lastActiveAt,
-      profile: user.profile ? {
+      profile: user.profile ? parseProfileArrays({
         ...user.profile,
         trustBadge: getTrustBadge(user.profile.ratingAvg || 0, user.profile.totalRatings || 0)
-      } : null,
+      }) : null,
       matchReason: getMatchReason(user, currentUser)
     }));
 
@@ -284,20 +316,66 @@ router.get('/recommendations', authMiddleware, async (req: AuthRequest, res) => 
   }
 });
 
-// Get available skills/categories
-router.get('/skills', async (req, res) => {
+// Get user by ID (for user profile page)
+router.get('/user/:userId', authMiddleware, async (req: AuthRequest, res) => {
   try {
-    const skills = await prisma.profile.findMany({
-      select: { skills: true },
-      where: {
-        skills: { hasSome: [] }
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const targetUserId = req.params.userId;
+
+    const user = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      include: {
+        profile: {
+          select: {
+            displayName: true,
+            bio: true,
+            skills: true,
+            location: true,
+            ratingAvg: true,
+            totalRatings: true,
+            avatarUrl: true,
+            introMedia: true
+          }
+        }
       }
     });
 
-    // Flatten and count skills
+    if (!user || !user.profile) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({
+      id: user.id,
+      name: user.name,
+      reputation: user.reputation,
+      lastActiveAt: user.lastActiveAt,
+      profile: parseProfileArrays({
+        ...user.profile,
+        trustBadge: getTrustBadge(user.profile.ratingAvg || 0, user.profile.totalRatings || 0)
+      })
+    });
+  } catch (error) {
+    console.error('Error fetching user:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get available skills/categories
+router.get('/skills', async (req, res) => {
+  try {
+    const profiles = await prisma.profile.findMany({
+      select: { skills: true }
+    });
+
+    // Flatten and count skills (parse JSON strings)
     const skillCounts: { [key: string]: number } = {};
-    skills.forEach(profile => {
-      profile.skills.forEach(skill => {
+    profiles.forEach((profile: any) => {
+      const skills = parseProfileArrays(profile).skills;
+      skills.forEach((skill: string) => {
         skillCounts[skill] = (skillCounts[skill] || 0) + 1;
       });
     });
@@ -332,9 +410,12 @@ function getMatchReason(user: any, currentUser: any): string {
     return 'Same location';
   }
   
-  const commonSkills = user.profile?.skills?.filter((skill: string) => 
-    currentUser.profile?.skills?.includes(skill)
-  ) || [];
+  // Parse JSON strings to arrays for SQLite compatibility
+  const userSkills = user.profile ? parseProfileArrays(user.profile).skills : [];
+  const currentUserSkills = currentUser.profile ? parseProfileArrays(currentUser.profile).skills : [];
+  const commonSkills = userSkills.filter((skill: string) => 
+    currentUserSkills.includes(skill)
+  );
   
   if (commonSkills.length > 0) {
     return `Similar skills: ${commonSkills.slice(0, 2).join(', ')}`;

@@ -1,62 +1,23 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 
 export default function LandingHero() {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const [isMuted, setIsMuted] = useState(true);
-  const [canLoad, setCanLoad] = useState(false);
-
-  useEffect(() => {
-    const t = setTimeout(() => setCanLoad(true), 400);
-    return () => clearTimeout(t);
-  }, []);
-
-  const toggleAudio = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.muted = !audio.muted;
-    setIsMuted(audio.muted);
-    if (!audio.muted) {
-      audio.play().catch(() => {});
-    } else {
-      audio.pause();
-    }
-  };
-
   return (
     <div className="relative min-h-[100dvh] overflow-hidden">
-      {/* Nuclear video background with fallback */}
-      {canLoad && (
-        <video
-          ref={videoRef}
-          className="absolute inset-0 -z-10 h-full w-full object-cover"
-          autoPlay
-          muted
-          loop
-          playsInline
-          preload="metadata"
-          poster="/window.svg"
-        >
-          <source src="/nuclear-explosion.mp4" type="video/mp4" />
-          <source src="/bigbang-intro.mp4" type="video/mp4" />
-        </video>
-      )}
 
-      {/* Ambient audio (muted by default) */}
-      <audio ref={audioRef} loop preload="metadata" muted={isMuted}>
-        <source src="/nuclear-audio.mp3" type="audio/mpeg" />
-        <source src="/bigbang-audio.mp3" type="audio/mpeg" />
-      </audio>
-
-      {/* Overlay for readability */}
-      <div className="absolute inset-0 -z-10 bg-gradient-to-b from-black/70 via-black/50 to-black/80" />
+      {/* Animated Planets */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        {/* Large Planet */}
+        <div className="absolute top-20 right-20 w-32 h-32 rounded-full bg-gradient-to-br from-purple-500/30 to-blue-500/20 blur-xl animate-float" style={{ animationDelay: '0s' }}></div>
+        <div className="absolute bottom-40 left-32 w-24 h-24 rounded-full bg-gradient-to-br from-pink-500/30 to-red-500/20 blur-lg animate-float" style={{ animationDelay: '2s' }}></div>
+        <div className="absolute top-1/2 left-1/4 w-16 h-16 rounded-full bg-gradient-to-br from-yellow-400/25 to-orange-500/15 blur-md animate-float" style={{ animationDelay: '4s' }}></div>
+        <div className="absolute bottom-20 right-1/3 w-20 h-20 rounded-full bg-gradient-to-br from-green-400/25 to-emerald-500/15 blur-lg animate-float" style={{ animationDelay: '1s' }}></div>
+      </div>
 
       {/* Content */}
-      <div className="container mx-auto px-6 py-24 flex min-h-[100dvh] items-center">
+      <div className="container mx-auto px-6 py-24 flex min-h-[100dvh] items-center relative z-10">
         <div className="max-w-3xl">
           <motion.h1
             initial={{ opacity: 0, y: 20 }}
@@ -86,18 +47,10 @@ export default function LandingHero() {
           >
             <Link
               href="/login"
-              className="rounded-xl px-6 py-3 text-white shadow-lg transition-all duration-300 bg-gradient-to-r from-indigo-500 via-purple-600 to-pink-600 hover:shadow-purple-500/30"
+              className="btn-primary rounded-xl px-6 py-3 text-white shadow-lg transition-all duration-300 bg-gradient-to-r from-indigo-500 via-purple-600 to-pink-600 hover:shadow-purple-500/30"
             >
               Enter App
             </Link>
-
-            <button
-              onClick={toggleAudio}
-              className="rounded-xl px-4 py-3 border border-yellow-400/30 bg-slate-900/40 backdrop-blur-md text-yellow-300 hover:bg-slate-800/60 transition-all"
-              aria-label={isMuted ? "Unmute ambient audio" : "Mute ambient audio"}
-            >
-              {isMuted ? "Unmute" : "Mute"}
-            </button>
           </motion.div>
         </div>
       </div>

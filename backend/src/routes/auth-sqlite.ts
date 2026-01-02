@@ -37,9 +37,9 @@ router.post("/signup", async (req: Request, res: Response) => {
         displayName: name.trim(),
         avatarUrl: null,
         bio: null,
-        skills: [],
-        categories: [],
-        languages: [],
+        skills: "[]",
+        categories: "[]",
+        languages: "[]",
         availability: {}
       }
     });

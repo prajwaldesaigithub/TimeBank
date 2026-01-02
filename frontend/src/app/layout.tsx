@@ -3,7 +3,6 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Header } from "./components/Header";
 import { TransitionProvider } from "./components/TransitionProvider";
-import CosmicVideo from "./components/CosmicVideo";
 
 export const metadata: Metadata = {
   title: "TimeBank",
@@ -20,7 +19,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-dvh bg-white text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100">
-        <CosmicVideo />
         <Header />
         <TransitionProvider>{children}</TransitionProvider>
       </body>

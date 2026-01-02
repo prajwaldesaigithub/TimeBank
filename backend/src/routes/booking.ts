@@ -156,12 +156,42 @@ router.post("/:id/complete-confirm", authMiddleware, async (req: AuthRequest, re
 
     const result = await prisma.$transaction(async (tx) => {
       const updated = await tx.booking.update({ where: { id: booking.id }, data: { status: "COMPLETED", completedAt: new Date() } });
+      const hoursStr = String(hours.toFixed(2));
+      
+      // Create ledger entries for both users
       await tx.ledgerEntry.createMany({
         data: [
-          { userId: booking.providerId, hours: String(hours.toFixed(2)), type: "EARNED", description: "Session completed", refBookingId: booking.id },
-          { userId: booking.receiverId, hours: String(hours.toFixed(2)), type: "SPENT", description: "Session completed", refBookingId: booking.id },
+          { userId: booking.providerId, hours: hoursStr, type: "EARNED", description: "Session completed", refBookingId: booking.id },
+          { userId: booking.receiverId, hours: hoursStr, type: "SPENT", description: "Session completed", refBookingId: booking.id },
         ],
       });
+      
+      // Create Transaction records for both users (for transaction history)
+      await tx.transaction.createMany({
+        data: [
+          {
+            senderId: booking.receiverId,
+            receiverId: booking.providerId,
+            amount: hoursStr,
+            type: "SPENT",
+            status: "COMPLETED",
+            description: `Time session: ${booking.category}`,
+            referenceId: booking.id,
+            completedAt: new Date(),
+          },
+          {
+            senderId: booking.receiverId,
+            receiverId: booking.providerId,
+            amount: hoursStr,
+            type: "EARNED",
+            status: "COMPLETED",
+            description: `Time session: ${booking.category}`,
+            referenceId: booking.id,
+            completedAt: new Date(),
+          },
+        ],
+      });
+      
       // Reputation updates: +10 provider, +5 receiver
       await tx.user.update({ where: { id: booking.providerId }, data: { reputation: { increment: 10 } } });
       await tx.user.update({ where: { id: booking.receiverId }, data: { reputation: { increment: 5 } } });

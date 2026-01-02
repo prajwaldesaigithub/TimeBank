@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { Bell, Check, X, Clock, User, MessageCircle } from "lucide-react";
+import api from "@/lib/api";
+import toast from "react-hot-toast";
 
 interface Notification {
   id: string;
@@ -21,18 +23,11 @@ export default function NotificationsPage() {
 
   const fetchNotifications = async () => {
     try {
-      const response = await fetch("http://localhost:4000/notifications", {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setNotifications(data.notifications || []);
-      }
+      const data = await api.get("/api/notifications");
+      setNotifications(data.notifications || []);
     } catch (error) {
       console.error("Failed to fetch notifications:", error);
+      toast.error("Failed to load notifications");
     } finally {
       setLoading(false);
     }
@@ -40,24 +35,17 @@ export default function NotificationsPage() {
 
   const markAsRead = async (notificationId: string) => {
     try {
-      const response = await fetch(`http://localhost:4000/notifications/${notificationId}/read`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      });
-
-      if (response.ok) {
-        setNotifications(prev => 
-          prev.map(n => 
-            n.id === notificationId 
-              ? { ...n, readAt: new Date().toISOString() }
-              : n
-          )
-        );
-      }
+      await api.patch(`/api/notifications/${notificationId}/read`);
+      setNotifications(prev => 
+        prev.map(n => 
+          n.id === notificationId 
+            ? { ...n, readAt: new Date().toISOString() }
+            : n
+        )
+      );
     } catch (error) {
       console.error("Failed to mark notification as read:", error);
+      toast.error("Failed to mark notification as read");
     }
   };
 

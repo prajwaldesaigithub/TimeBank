@@ -17,6 +17,8 @@ import {
   Calendar
 } from "lucide-react";
 import toast from "react-hot-toast";
+import api from "@/lib/api";
+import { parseJsonArray } from "@/lib/utils";
 
 interface User {
   id: string;
@@ -51,6 +53,8 @@ export default function UserProfilePage() {
   const [loading, setLoading] = useState(true);
   const [showRequestForm, setShowRequestForm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [isFollowingLoading, setIsFollowingLoading] = useState(false);
   const [requestForm, setRequestForm] = useState<TimeRequestForm>({
     title: '',
     description: '',
@@ -62,29 +66,54 @@ export default function UserProfilePage() {
   useEffect(() => {
     if (params.id) {
       fetchUserProfile(params.id as string);
+      checkFollowingStatus(params.id as string);
     }
   }, [params.id]);
 
   const fetchUserProfile = async (userId: string) => {
     try {
-      const response = await fetch(`/api/discovery/user/${userId}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-
-      if (response.ok) {
-        const userData = await response.json();
-        setUser(userData);
-      } else {
-        toast.error("Failed to load user profile");
-        router.push('/home');
+      const userData = await api.get(`/api/discovery/user/${userId}`);
+      // Parse JSON strings to arrays for SQLite compatibility
+      if (userData.profile) {
+        userData.profile.skills = parseJsonArray(userData.profile.skills);
       }
+      setUser(userData);
     } catch (error) {
+      console.error("Failed to load user profile:", error);
       toast.error("Failed to load user profile");
       router.push('/home');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const checkFollowingStatus = async (userId: string) => {
+    try {
+      const data = await api.get(`/api/connections/${userId}/following`);
+      setIsFollowing(data.isFollowing);
+    } catch (error) {
+      console.error("Failed to check follow status:", error);
+    }
+  };
+
+  const handleFollow = async () => {
+    if (!user) return;
+    setIsFollowingLoading(true);
+    try {
+      if (isFollowing) {
+        await api.delete(`/api/connections/${user.id}/follow`);
+        setIsFollowing(false);
+        toast.success("Unfollowed successfully");
+      } else {
+        await api.post(`/api/connections/${user.id}/follow`);
+        setIsFollowing(true);
+        toast.success("Following user");
+      }
+    } catch (error: any) {
+      console.error("Failed to toggle follow:", error);
+      toast.error(error.message || "Failed to update follow status");
+    } finally {
+      setIsFollowingLoading(false);
     }
   };
 
@@ -93,33 +122,22 @@ export default function UserProfilePage() {
 
     setIsSubmitting(true);
     try {
-      const response = await fetch('/api/time-requests', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({
-          receiverId: user.id,
-          ...requestForm
-        })
+      await api.post('/api/time-requests', {
+        receiverId: user.id,
+        ...requestForm
       });
-
-      if (response.ok) {
-        toast.success("Time request sent successfully!");
-        setShowRequestForm(false);
-        setRequestForm({
-          title: '',
-          description: '',
-          duration: 1,
-          proposedDate: '',
-          credits: 5
-        });
-      } else {
-        throw new Error('Failed to send request');
-      }
-    } catch (error) {
-      toast.error("Failed to send time request");
+      toast.success("Time request sent successfully!");
+      setShowRequestForm(false);
+      setRequestForm({
+        title: '',
+        description: '',
+        duration: 1,
+        proposedDate: '',
+        credits: 5
+      });
+    } catch (error: any) {
+      console.error("Failed to send time request:", error);
+      toast.error(error.message || "Failed to send time request");
     } finally {
       setIsSubmitting(false);
     }
@@ -200,11 +218,19 @@ export default function UserProfilePage() {
                 </div>
               </div>
               <div className="flex space-x-2">
-                <button className="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
-                  <Share2 className="w-5 h-5 text-slate-300" />
+                <button 
+                  onClick={handleFollow}
+                  disabled={isFollowingLoading}
+                  className={`p-2 rounded-lg transition-colors ${
+                    isFollowing 
+                      ? "bg-purple-600 hover:bg-purple-700" 
+                      : "bg-slate-700 hover:bg-slate-600"
+                  }`}
+                >
+                  <Heart className={`w-5 h-5 ${isFollowing ? "text-white fill-current" : "text-slate-300"}`} />
                 </button>
                 <button className="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors">
-                  <Heart className="w-5 h-5 text-slate-300" />
+                  <Share2 className="w-5 h-5 text-slate-300" />
                 </button>
               </div>
             </div>

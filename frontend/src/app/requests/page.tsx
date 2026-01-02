@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { Clock, CheckCircle, XCircle, AlertCircle, MessageCircle } from "lucide-react";
+import api from "@/lib/api";
+import toast from "react-hot-toast";
 
 interface Booking {
   id: string;
@@ -28,18 +30,11 @@ export default function RequestsPage() {
   const fetchBookings = async () => {
     try {
       const role = activeTab === "incoming" ? "provider" : "receiver";
-      const response = await fetch(`http://localhost:4000/booking?role=${role}`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setBookings(data.bookings || []);
-      }
+      const data = await api.get(`/api/booking?role=${role}`);
+      setBookings(data.bookings || []);
     } catch (error) {
       console.error("Failed to fetch bookings:", error);
+      toast.error("Failed to load bookings");
     } finally {
       setLoading(false);
     }
@@ -47,23 +42,13 @@ export default function RequestsPage() {
 
   const handleBookingAction = async (bookingId: string, action: "accept" | "decline" | "cancel" | "complete") => {
     try {
-      const response = await fetch(`http://localhost:4000/booking/${bookingId}/${action}`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        ...(action === "accept" && { body: JSON.stringify({ slot: new Date().toISOString() }) }),
-      });
-
-      if (response.ok) {
-        fetchBookings(); // Refresh the list
-      } else {
-        const error = await response.json();
-        alert(`Failed to ${action} booking: ${error.error}`);
-      }
-    } catch (error) {
+      const body = action === "accept" ? { slot: new Date().toISOString() } : undefined;
+      await api.patch(`/api/booking/${bookingId}/${action}`, body);
+      toast.success(`Booking ${action}ed successfully`);
+      fetchBookings(); // Refresh the list
+    } catch (error: any) {
       console.error(`Failed to ${action} booking:`, error);
-      alert(`Failed to ${action} booking`);
+      toast.error(error.message || `Failed to ${action} booking`);
     }
   };
 

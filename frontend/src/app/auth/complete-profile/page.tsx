@@ -6,6 +6,7 @@ import { useForm } from "react-hook-form";
 import { motion } from "framer-motion";
 import { Camera, Upload, X, Check } from "lucide-react";
 import toast from "react-hot-toast";
+const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 interface ProfileFormData {
   displayName: string;
@@ -88,10 +89,11 @@ export default function CompleteProfilePage() {
       if (profileImage) formData.append('profileImage', profileImage);
       if (introMedia) formData.append('introMedia', introMedia);
 
+      const token = localStorage.getItem('token');
       const response = await fetch('/api/profiles/complete', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${token}`
         },
         body: formData
       });
@@ -100,7 +102,8 @@ export default function CompleteProfilePage() {
         toast.success("Profile completed successfully!");
         router.push('/dashboard');
       } else {
-        throw new Error('Failed to complete profile');
+        const error = await response.json().catch(() => ({ error: 'Failed to complete profile' }));
+        throw new Error(error.error || 'Failed to complete profile');
       }
     } catch (error) {
       toast.error("Failed to complete profile. Please try again.");

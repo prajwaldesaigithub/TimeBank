@@ -35,10 +35,19 @@ router.post("/", authMiddleware, async (req: AuthRequest, res: Response) => {
         receiverId,
         title: title.trim(),
         description: (description || "").trim(),
-        duration: new Prisma.Decimal(duration as any),
-        credits: new Prisma.Decimal(credits as any),
+        duration: String(Number(duration).toFixed(2)),
+        credits: String(Number(credits).toFixed(2)),
         proposedDate: proposedDate ? new Date(proposedDate) : null,
         status: TimeRequestStatus.PENDING,
+      },
+    });
+
+    // Create notification for receiver
+    await prisma.notification.create({
+      data: {
+        userId: receiverId,
+        kind: "TIME_REQUEST",
+        payload: { requestId: newRequest.id, title: title.trim(), senderId } as any,
       },
     });
 
@@ -89,10 +98,113 @@ router.patch("/:id/status", authMiddleware, async (req: AuthRequest, res: Respon
       return res.status(400).json({ error: `Invalid status value. Allowed: ${allowed.join(", ")}` });
     }
 
+    const userId = req.user?.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const request = await prisma.timeRequest.findUnique({
+      where: { id },
+    });
+
+    if (!request) {
+      return res.status(404).json({ error: "Time request not found" });
+    }
+
+    // Only receiver can accept/reject, sender can cancel
+    if (status === "ACCEPTED" || status === "REJECTED") {
+      if (request.receiverId !== userId) {
+        return res.status(403).json({ error: "Only the receiver can accept or reject requests" });
+      }
+    } else if (status === "CANCELLED") {
+      if (request.senderId !== userId && request.receiverId !== userId) {
+        return res.status(403).json({ error: "Only participants can cancel" });
+      }
+    }
+
+    const updateData: any = { status: status as TimeRequestStatus };
+    if (status === "ACCEPTED") {
+      updateData.acceptedAt = new Date();
+    } else if (status === "COMPLETED") {
+      updateData.completedAt = new Date();
+    }
+
     const updated = await prisma.timeRequest.update({
       where: { id },
-      data: { status: status as TimeRequestStatus },
+      data: updateData,
     });
+
+    // If completed, create Transaction records for both users
+    if (status === "COMPLETED") {
+      const duration = Number(request.duration);
+      const credits = Number(request.credits);
+      
+      await prisma.$transaction(async (tx) => {
+        // Create Transaction records for both users
+        await tx.transaction.createMany({
+          data: [
+            {
+              senderId: request.senderId,
+              receiverId: request.receiverId,
+              amount: String(credits.toFixed(2)),
+              type: "SPENT",
+              status: "COMPLETED",
+              description: `Time request: ${request.title}`,
+              referenceId: request.id,
+              completedAt: new Date(),
+            },
+            {
+              senderId: request.senderId,
+              receiverId: request.receiverId,
+              amount: String(credits.toFixed(2)),
+              type: "EARNED",
+              status: "COMPLETED",
+              description: `Time request: ${request.title}`,
+              referenceId: request.id,
+              completedAt: new Date(),
+            },
+          ],
+        });
+
+        // Update user credits (SQLite uses String, so we need to calculate manually)
+        const receiver = await tx.user.findUnique({ where: { id: request.receiverId }, select: { credits: true } });
+        const sender = await tx.user.findUnique({ where: { id: request.senderId }, select: { credits: true } });
+        
+        if (receiver) {
+          const newReceiverCredits = (Number(receiver.credits) + credits).toFixed(2);
+          await tx.user.update({
+            where: { id: request.receiverId },
+            data: { credits: newReceiverCredits },
+          });
+        }
+        
+        if (sender) {
+          const newSenderCredits = Math.max(0, Number(sender.credits) - credits).toFixed(2);
+          await tx.user.update({
+            where: { id: request.senderId },
+            data: { credits: newSenderCredits },
+          });
+        }
+
+        // Create notifications
+        await tx.notification.createMany({
+          data: [
+            { userId: request.senderId, kind: "TIME_REQUEST_COMPLETED", payload: { requestId: request.id } as any },
+            { userId: request.receiverId, kind: "TIME_REQUEST_COMPLETED", payload: { requestId: request.id } as any },
+          ],
+        });
+      });
+    } else {
+      // Create notification for status change
+      const notifyUserId = status === "ACCEPTED" || status === "REJECTED" ? request.senderId : request.receiverId;
+      await prisma.notification.create({
+        data: {
+          userId: notifyUserId,
+          kind: `TIME_REQUEST_${status}`,
+          payload: { requestId: request.id } as any,
+        },
+      });
+    }
 
     res.json(updated);
   } catch (err: any) {

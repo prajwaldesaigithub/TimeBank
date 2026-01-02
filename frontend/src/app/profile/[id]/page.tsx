@@ -2,7 +2,10 @@
 
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
+import api from "@/lib/api";
+import toast from "react-hot-toast";
 import { MapPin, Star, Clock, MessageCircle, User, Calendar } from "lucide-react";
+import { parseJsonArray } from "@/lib/utils";
 
 interface Profile {
   id: string;
@@ -36,47 +39,40 @@ export default function ProfilePage() {
 
   const fetchProfile = async () => {
     try {
-      const response = await fetch(`http://localhost:4000/profiles/${params.id}`);
-      if (response.ok) {
-        const data = await response.json();
-        setProfile(data.profile);
+      const data = await api.get(`/api/profiles/${params.id}`, { requireAuth: false });
+      // Parse JSON strings to arrays for SQLite compatibility
+      if (data.profile) {
+        data.profile.skills = parseJsonArray(data.profile.skills);
+        data.profile.categories = parseJsonArray(data.profile.categories);
       }
+      setProfile(data.profile);
     } catch (error) {
       console.error("Failed to fetch profile:", error);
+      toast.error("Failed to load profile");
     } finally {
       setLoading(false);
     }
   };
 
   const handleRequestTime = async () => {
-    if (!profile || !requestData.hours || !requestData.category) return;
+    if (!profile || !requestData.hours || !requestData.category) {
+      toast.error("Please fill in all required fields");
+      return;
+    }
 
     try {
-      const response = await fetch("http://localhost:4000/booking", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-        body: JSON.stringify({
-          providerId: profile.userId,
-          hours: parseFloat(requestData.hours),
-          category: requestData.category,
-          note: requestData.note,
-        }),
+      await api.post("/api/booking", {
+        providerId: profile.userId,
+        hours: parseFloat(requestData.hours),
+        category: requestData.category,
+        note: requestData.note,
       });
-
-      if (response.ok) {
-        alert("Time request sent successfully!");
-        setShowRequestModal(false);
-        setRequestData({ hours: "", category: "", note: "" });
-      } else {
-        const error = await response.json();
-        alert(`Failed to send request: ${error.error}`);
-      }
-    } catch (error) {
+      toast.success("Time request sent successfully!");
+      setShowRequestModal(false);
+      setRequestData({ hours: "", category: "", note: "" });
+    } catch (error: any) {
       console.error("Failed to send request:", error);
-      alert("Failed to send request");
+      toast.error(error.message || "Failed to send request");
     }
   };
 

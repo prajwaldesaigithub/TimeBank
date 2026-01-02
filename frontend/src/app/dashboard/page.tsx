@@ -22,6 +22,7 @@ import {
   AlertCircle
 } from "lucide-react";
 import toast from "react-hot-toast";
+import api from "@/lib/api";
 
 interface DashboardStats {
   credits: number;
@@ -93,31 +94,22 @@ export default function DashboardPage() {
 
   const fetchDashboardData = async () => {
     try {
-      const [statsRes, requestsRes, conversationsRes] = await Promise.all([
-        fetch("/api/transactions/stats", {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
-        }),
-        fetch("/api/time-requests/user/me", {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
-        }),
-        fetch("/api/messages/conversations", {
-          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
-        })
+      const [statsData, requestsData, conversationsData] = await Promise.all([
+        api.get("/api/transactions/stats").catch(() => null),
+        api.get("/api/time-requests/user/me").catch(() => ({ sent: [], received: [] })),
+        api.get("/api/messages/conversations").catch(() => [])
       ]);
 
-      if (statsRes.ok) {
-        const statsData = await statsRes.json();
+      if (statsData) {
         setStats(statsData);
       }
 
-      if (requestsRes.ok) {
-        const requestsData = await requestsRes.json();
-        setTimeRequests([...requestsData.sent, ...requestsData.received]);
+      if (requestsData) {
+        setTimeRequests([...(requestsData.sent || []), ...(requestsData.received || [])]);
       }
 
-      if (conversationsRes.ok) {
-        const conversationsData = await conversationsRes.json();
-        setConversations(conversationsData);
+      if (conversationsData) {
+        setConversations(Array.isArray(conversationsData) ? conversationsData : []);
       }
     } catch (error) {
       console.error("Failed to fetch dashboard data:", error);

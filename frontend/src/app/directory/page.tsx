@@ -2,6 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { Search, Filter, User, MapPin, Star, Clock } from "lucide-react";
+import api from "@/lib/api";
+import toast from "react-hot-toast";
+import { parseJsonArray } from "@/lib/utils";
 
 interface Profile {
   id: string;
@@ -22,6 +25,9 @@ export default function DirectoryPage() {
   const [skills, setSkills] = useState("");
   const [categories, setCategories] = useState("");
   const [location, setLocation] = useState("");
+  const [followingStatus, setFollowingStatus] = useState<Record<string, boolean>>({});
+  const [showRequestModal, setShowRequestModal] = useState<string | null>(null);
+  const [requestData, setRequestData] = useState({ hours: "", category: "", note: "" });
 
   useEffect(() => {
     fetchProfiles();
@@ -35,11 +41,17 @@ export default function DirectoryPage() {
       if (categories) params.append("categories", categories);
       if (location) params.append("location", location);
 
-      const response = await fetch(`http://localhost:4000/profiles?${params}`);
-      const data = await response.json();
-      setProfiles(data.profiles || []);
+      const data = await api.get(`/api/profiles?${params}`);
+      // Parse JSON strings to arrays for SQLite compatibility
+      const parsedProfiles = (data.profiles || []).map((profile: any) => ({
+        ...profile,
+        skills: parseJsonArray(profile.skills),
+        categories: parseJsonArray(profile.categories),
+      }));
+      setProfiles(parsedProfiles);
     } catch (error) {
       console.error("Failed to fetch profiles:", error);
+      toast.error("Failed to load profiles");
     } finally {
       setLoading(false);
     }
@@ -48,6 +60,46 @@ export default function DirectoryPage() {
   const handleSearch = () => {
     setLoading(true);
     fetchProfiles();
+  };
+
+  const handleFollow = async (userId: string) => {
+    try {
+      const isFollowing = followingStatus[userId];
+      if (isFollowing) {
+        await api.delete(`/api/connections/${userId}/follow`);
+        setFollowingStatus({ ...followingStatus, [userId]: false });
+        toast.success("Unfollowed successfully");
+      } else {
+        await api.post(`/api/connections/${userId}/follow`);
+        setFollowingStatus({ ...followingStatus, [userId]: true });
+        toast.success("Following user");
+      }
+    } catch (error: any) {
+      console.error("Failed to toggle follow:", error);
+      toast.error(error.message || "Failed to update follow status");
+    }
+  };
+
+  const handleRequestTime = async (profileId: string, userId: string) => {
+    if (!requestData.hours || !requestData.category) {
+      toast.error("Please fill in hours and category");
+      return;
+    }
+
+    try {
+      await api.post("/api/booking", {
+        providerId: userId,
+        hours: parseFloat(requestData.hours),
+        category: requestData.category,
+        note: requestData.note,
+      });
+      toast.success("Time request sent successfully!");
+      setShowRequestModal(null);
+      setRequestData({ hours: "", category: "", note: "" });
+    } catch (error: any) {
+      console.error("Failed to send request:", error);
+      toast.error(error.message || "Failed to send request");
+    }
   };
 
   if (loading) {
@@ -179,11 +231,21 @@ export default function DirectoryPage() {
               )}
 
               <div className="flex gap-2">
-                <button className="flex-1 bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-900 px-4 py-2 rounded-lg font-semibold hover:from-yellow-300 hover:to-amber-400 transition-all">
+                <button 
+                  onClick={() => setShowRequestModal(profile.id)}
+                  className="flex-1 bg-gradient-to-r from-yellow-400 to-amber-500 text-slate-900 px-4 py-2 rounded-lg font-semibold hover:from-yellow-300 hover:to-amber-400 transition-all"
+                >
                   Request Time
                 </button>
-                <button className="px-4 py-2 border border-slate-600 text-slate-300 rounded-lg hover:border-yellow-400 hover:text-yellow-400 transition-all">
-                  Follow
+                <button 
+                  onClick={() => handleFollow(profile.userId)}
+                  className={`px-4 py-2 border rounded-lg transition-all ${
+                    followingStatus[profile.userId]
+                      ? "bg-yellow-400/20 border-yellow-400 text-yellow-400"
+                      : "border-slate-600 text-slate-300 hover:border-yellow-400 hover:text-yellow-400"
+                  }`}
+                >
+                  {followingStatus[profile.userId] ? "Following" : "Follow"}
                 </button>
               </div>
             </div>
@@ -198,6 +260,75 @@ export default function DirectoryPage() {
           </div>
         )}
       </div>
+
+      {/* Request Time Modal */}
+      {showRequestModal && (() => {
+        const profile = profiles.find(p => p.id === showRequestModal);
+        if (!profile) return null;
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+            <div className="bg-slate-800 rounded-xl p-6 w-full max-w-md border border-slate-700">
+              <h3 className="text-xl font-semibold text-white mb-4">Request Time from {profile.displayName}</h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">Hours</label>
+                  <input
+                    type="number"
+                    min="0.5"
+                    step="0.5"
+                    value={requestData.hours}
+                    onChange={(e) => setRequestData({...requestData, hours: e.target.value})}
+                    className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                    placeholder="e.g., 2.5"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">Category</label>
+                  <input
+                    type="text"
+                    value={requestData.category}
+                    onChange={(e) => setRequestData({...requestData, category: e.target.value})}
+                    className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                    placeholder="e.g., Web Development"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-300 mb-2">Note (Optional)</label>
+                  <textarea
+                    value={requestData.note}
+                    onChange={(e) => setRequestData({...requestData, note: e.target.value})}
+                    rows={3}
+                    className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                    placeholder="Add any additional details..."
+                  />
+                </div>
+              </div>
+
+              <div className="flex space-x-3 mt-6">
+                <button
+                  onClick={() => {
+                    setShowRequestModal(null);
+                    setRequestData({ hours: "", category: "", note: "" });
+                  }}
+                  className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleRequestTime(profile.id, profile.userId)}
+                  disabled={!requestData.hours || !requestData.category}
+                  className="flex-1 px-4 py-2 bg-yellow-400 hover:bg-yellow-500 disabled:opacity-50 disabled:cursor-not-allowed text-slate-900 rounded-lg transition-colors"
+                >
+                  Send Request
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

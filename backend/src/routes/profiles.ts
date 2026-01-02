@@ -2,6 +2,7 @@ import { Router, type Response } from "express";
 import { getPrisma } from "../lib/prisma";
 import { authMiddleware, type AuthRequest } from "../middleware/auth";
 import { z } from "zod";
+import { parseProfileArrays } from "../lib/parseProfile";
 
 const router = Router();
 
@@ -16,11 +17,13 @@ router.get("/", async (req: AuthRequest, res: Response) => {
     const take = Math.min(Math.max(parseInt(String(req.query.take || "20"), 10) || 20, 1), 50);
     const cursor = req.query.cursor ? { id: String(req.query.cursor) } : undefined;
 
+    // Note: SQLite stores skills/categories as JSON strings, so we'll filter in JavaScript
+    const skillsFilter = skills.length > 0 ? skills : null;
+    const categoriesFilter = categories.length > 0 ? categories : null;
+    
     const where: any = {
       AND: [
         query ? { OR: [{ displayName: { contains: query, mode: "insensitive" } }, { bio: { contains: query, mode: "insensitive" } }] } : {},
-        skills.length ? { skills: { hasSome: skills } } : {},
-        categories.length ? { categories: { hasSome: categories } } : {},
         location ? { location: { contains: location, mode: "insensitive" } } : {},
       ],
     };
@@ -28,7 +31,7 @@ router.get("/", async (req: AuthRequest, res: Response) => {
     const items = await prisma.profile.findMany({
       where,
       orderBy: { displayName: "asc" },
-      take: take + 1,
+      take: (take + 1) * 2, // Fetch more to account for filtering
       ...(cursor ? { cursor, skip: 1 } : {}),
       select: {
         id: true,
@@ -43,10 +46,28 @@ router.get("/", async (req: AuthRequest, res: Response) => {
         ratingAvg: true,
       },
     });
-    const hasMore = items.length > take;
-    const profiles = hasMore ? items.slice(0, take) : items;
+    
+    // Filter by skills/categories if needed (SQLite stores as JSON strings)
+    let filteredItems = items;
+    if (skillsFilter && skillsFilter.length > 0) {
+      filteredItems = filteredItems.filter((profile: any) => {
+        const profileSkills = parseProfileArrays(profile).skills;
+        return skillsFilter.some((skill: string) => profileSkills.includes(skill));
+      });
+    }
+    if (categoriesFilter && categoriesFilter.length > 0) {
+      filteredItems = filteredItems.filter((profile: any) => {
+        const profileCategories = parseProfileArrays(profile).categories;
+        return categoriesFilter.some((category: string) => profileCategories.includes(category));
+      });
+    }
+    
+    const hasMore = filteredItems.length > take;
+    const profiles = hasMore ? filteredItems.slice(0, take) : filteredItems;
     const nextCursor = hasMore ? profiles[profiles.length - 1].id : null;
-    res.json({ profiles, nextCursor });
+    // Parse JSON strings to arrays for SQLite compatibility
+    const parsedProfiles = profiles.map(parseProfileArrays);
+    res.json({ profiles: parsedProfiles, nextCursor });
   } catch (err) {
     console.error("GET /profiles error:", err);
     res.status(500).json({ error: "Failed to list profiles" });
@@ -73,7 +94,8 @@ router.get("/:id", async (req: AuthRequest, res: Response) => {
       },
     });
     if (!profile) return res.status(404).json({ error: "Profile not found" });
-    res.json({ profile });
+    // Parse JSON strings to arrays for SQLite compatibility
+    res.json({ profile: parseProfileArrays(profile) });
   } catch (err) {
     console.error("GET /profiles/:id error:", err);
     res.status(500).json({ error: "Failed to fetch profile" });
@@ -98,7 +120,8 @@ router.get("/me", authMiddleware, async (req: AuthRequest, res: Response) => {
     const prisma = getPrisma();
     const profile = await prisma.profile.findUnique({ where: { userId: req.user.userId } });
     if (!profile) return res.status(404).json({ error: "Profile not found" });
-    return res.json({ profile });
+    // Parse JSON strings to arrays for SQLite compatibility
+    return res.json({ profile: parseProfileArrays(profile) });
   } catch (err) {
     console.error("GET /profiles/me error:", err);
     return res.status(500).json({ error: "Failed to fetch profile" });
@@ -111,8 +134,15 @@ router.patch("/me", authMiddleware, async (req: AuthRequest, res: Response) => {
     const parsed = updateProfileSchema.safeParse(req.body ?? {});
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const prisma = getPrisma();
-    const profile = await prisma.profile.update({ where: { userId: req.user.userId }, data: parsed.data as any });
-    return res.json({ profile });
+    // Convert arrays to JSON strings for SQLite storage
+    const updateData: any = { ...parsed.data };
+    if (updateData.skills) updateData.skills = JSON.stringify(updateData.skills);
+    if (updateData.categories) updateData.categories = JSON.stringify(updateData.categories);
+    if (updateData.languages) updateData.languages = JSON.stringify(updateData.languages);
+    
+    const profile = await prisma.profile.update({ where: { userId: req.user.userId }, data: updateData });
+    // Parse JSON strings to arrays for response
+    return res.json({ profile: parseProfileArrays(profile) });
   } catch (err) {
     console.error("PATCH /profiles/me error:", err);
     return res.status(500).json({ error: "Failed to update profile" });

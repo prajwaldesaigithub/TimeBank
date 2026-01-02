@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { io, Socket } from "socket.io-client";
 import toast from "react-hot-toast";
+import api from "@/lib/api";
 
 interface Message {
   id: string;
@@ -110,16 +111,8 @@ export default function ChatInterface({ requestId, otherUser, onClose }: ChatInt
 
   const fetchMessages = async () => {
     try {
-      const response = await fetch(`/api/messages/conversation/${requestId}`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`
-        }
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setMessages(data);
-      }
+      const data = await api.get(`/api/messages/conversation/${requestId}`);
+      setMessages(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error("Failed to fetch messages:", error);
       toast.error("Failed to load messages");

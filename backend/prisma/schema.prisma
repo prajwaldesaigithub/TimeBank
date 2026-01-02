@@ -5,7 +5,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -16,7 +16,7 @@ model User {
   name              String
   avatarUrl         String?
   reputation        Int             @default(0)
-  credits           Decimal         @default(10) @db.Decimal(10, 2)
+  credits           String          @default("10.00")
   isVerified        Boolean         @default(false)
   lastActiveAt      DateTime?
   createdAt         DateTime        @default(now())
@@ -45,8 +45,8 @@ model Profile {
   displayName  String
   avatarUrl    String?
   bio          String?
-  skills       String[]
-  categories   String[]
+  skills       String   @default("[]")
+  categories   String   @default("[]")
   availability Json
   location     String?
   ratingAvg    Float?
@@ -54,8 +54,8 @@ model Profile {
   introMedia   String?
   isComplete   Boolean  @default(false)
   timezone     String?
-  languages    String[]
-  hourlyRate   Decimal? @db.Decimal(5, 2)
+  languages    String   @default("[]")
+  hourlyRate   String?
 
   user         User     @relation(fields: [userId], references: [id])
 }
@@ -72,7 +72,7 @@ model Booking {
   id            String        @id @default(cuid())
   providerId    String
   receiverId    String
-  hours         Decimal       @db.Decimal(4, 2)
+  hours         String
   category      String
   note          String?
   startAt       DateTime?
@@ -132,7 +132,7 @@ enum LedgerType {
 model LedgerEntry {
   id           String     @id @default(cuid())
   userId       String
-  hours        Decimal    @db.Decimal(10, 2)
+  hours        String
   type         LedgerType
   description  String?
   refBookingId String?
@@ -205,10 +205,10 @@ model TimeRequest {
   receiverId   String
   title        String
   description  String
-  duration     Decimal           @db.Decimal(4, 2)
+  duration     String
   proposedDate DateTime?
   status       TimeRequestStatus @default(PENDING)
-  credits      Decimal           @db.Decimal(10, 2)
+  credits      String
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
   acceptedAt   DateTime?
@@ -258,7 +258,7 @@ model Transaction {
   id          String            @id @default(cuid())
   senderId    String
   receiverId  String?
-  amount      Decimal           @db.Decimal(10, 2)
+  amount      String
   type        TransactionType
   status      TransactionStatus @default(PENDING)
   description String?

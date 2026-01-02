@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { Clock, TrendingUp, TrendingDown, Calendar, Filter } from "lucide-react";
+import api from "@/lib/api";
+import toast from "react-hot-toast";
 
 interface LedgerEntry {
   id: string;
@@ -32,18 +34,11 @@ export default function HistoryPage() {
 
   const fetchBalance = async () => {
     try {
-      const response = await fetch("http://localhost:4000/wallet/balance", {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setBalance(data);
-      }
+      const data = await api.get("/api/wallet/balance");
+      setBalance(data);
     } catch (error) {
       console.error("Failed to fetch balance:", error);
+      toast.error("Failed to load balance");
     }
   };
 
@@ -55,18 +50,11 @@ export default function HistoryPage() {
       params.append("page", page.toString());
       params.append("limit", "20");
 
-      const response = await fetch(`http://localhost:4000/wallet/history?${params}`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setEntries(data.items || []);
-      }
+      const data = await api.get(`/api/wallet/history?${params}`);
+      setEntries(data.items || []);
     } catch (error) {
       console.error("Failed to fetch history:", error);
+      toast.error("Failed to load history");
     } finally {
       setLoading(false);
     }
