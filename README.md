@@ -609,8 +609,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 **Prajwal Desai**
 
 - GitHub: [@prajwaldesaigithub](https://github.com/prajwaldesaigithub)
-- LinkedIn: [Your LinkedIn Profile]
-- Email: your.email@example.com
+- LinkedIn: [https://www.linkedin.com/in/prajwal-desai-3697ba257]
+- Email: beingprajwaldesai@gmail.com
 
 ---
 
