@@ -1,8 +1,9 @@
 // app/layout.tsx
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import { Header } from "./components/Header";
+import { ConditionalHeader } from "./components/ConditionalHeader";
 import { TransitionProvider } from "./components/TransitionProvider";
+import { AppLoader } from "./components/AppLoader";
 
 export const metadata: Metadata = {
   title: "TimeBank",
@@ -19,7 +20,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-dvh bg-white text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100">
-        <Header />
+        <AppLoader />
+        <ConditionalHeader />
         <TransitionProvider>{children}</TransitionProvider>
       </body>
     </html>

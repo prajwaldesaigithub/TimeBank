@@ -10,17 +10,19 @@ datasource db {
 }
 
 model User {
-  id                String          @id @default(cuid())
-  email             String          @unique
-  passwordHash      String
-  name              String
-  avatarUrl         String?
-  reputation        Int             @default(0)
-  credits           String          @default("10.00")
-  isVerified        Boolean         @default(false)
-  lastActiveAt      DateTime?
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  id                    String          @id @default(cuid())
+  email                 String          @unique
+  passwordHash          String
+  name                  String
+  avatarUrl             String?
+  reputation            Int             @default(0)
+  credits               String          @default("10.00")
+  isVerified            Boolean         @default(false)
+  emailVerificationToken String?
+  emailVerifiedAt       DateTime?
+  lastActiveAt          DateTime?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
 
   profile           Profile?
   provided          Booking[]       @relation("ProvidedBookings")

@@ -61,6 +61,13 @@ export default function LoginPage() {
         setError(data?.error || "Login failed.");
         return;
       }
+      
+      // Check if email verification is required
+      if (data.requiresVerification && !data.user?.isVerified) {
+        setError("Please verify your email before logging in. Check your inbox for the verification link.");
+        return;
+      }
+      
       localStorage.setItem("token", data.token);
       if (remember) localStorage.setItem("rememberedEmail", email);
       router.replace("/dashboard");
@@ -141,8 +148,44 @@ export default function LoginPage() {
               </button>
 
               <div className="text-center text-sm text-slate-600 dark:text-slate-300">
-                Don’t have an account? <Link href="/signup" className="underline underline-offset-4">Create one</Link>
+                Don't have an account? <Link href="/signup" className="underline underline-offset-4">Create one</Link>
               </div>
+              
+              {error && error.includes("verify") && (
+                <div className="mt-2 text-center">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const token = localStorage.getItem("token");
+                        if (!token) {
+                          setError("Please login first to resend verification email.");
+                          return;
+                        }
+                        const res = await fetch(`${API}/auth/resend-verification`, {
+                          method: "POST",
+                          headers: { 
+                            "Content-Type": "application/json",
+                            Authorization: `Bearer ${token}`
+                          },
+                        });
+                        if (res.ok) {
+                          setError(null);
+                          alert("Verification email sent! Please check your inbox.");
+                        } else {
+                          const data = await res.json();
+                          setError(data?.error || "Failed to resend verification email.");
+                        }
+                      } catch {
+                        setError("Network error. Please try again.");
+                      }
+                    }}
+                    className="text-sm text-blue-500 hover:text-blue-600 underline"
+                  >
+                    Resend verification email
+                  </button>
+                </div>
+              )}
             </form>
           </div>
         </section>

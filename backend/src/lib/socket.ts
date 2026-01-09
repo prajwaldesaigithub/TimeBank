@@ -79,6 +79,14 @@ export function setupSocketIO(server: HTTPServer) {
       }
     });
 
+    // Join user-specific room for direct messages
+    aSocket.on('join-user', (userId: string) => {
+      if (userId === aSocket.userId) {
+        aSocket.join(`user:${userId}`);
+        aSocket.emit('joined-user', { userId });
+      }
+    });
+
     // Leave time request room
     aSocket.on('leave-request', (requestId: string) => {
       aSocket.leave(`request:${requestId}`);
@@ -154,6 +162,83 @@ export function setupSocketIO(server: HTTPServer) {
 
       } catch (error) {
         console.error('Error sending message:', error);
+        aSocket.emit('error', { message: 'Failed to send message' });
+      }
+    });
+
+    // Handle direct messages (without requestId)
+    aSocket.on('send-direct-message', async (data: {
+      receiverId: string;
+      content: string;
+      messageType?: string;
+    }) => {
+      try {
+        const { receiverId, content, messageType = 'TEXT' } = data;
+
+        if (aSocket.userId === receiverId) {
+          aSocket.emit('error', { message: 'Cannot message yourself' });
+          return;
+        }
+
+        // Verify receiver exists
+        const receiver = await prisma.user.findUnique({
+          where: { id: receiverId }
+        });
+
+        if (!receiver) {
+          aSocket.emit('error', { message: 'Receiver not found' });
+          return;
+        }
+
+        // Create message in database
+        const message = await prisma.message.create({
+          data: {
+            senderId: aSocket.userId!,
+            receiverId: receiverId,
+            content,
+            messageType
+          },
+          include: {
+            sender: {
+              select: {
+                id: true,
+                name: true,
+                avatarUrl: true,
+                profile: {
+                  select: {
+                    displayName: true
+                  }
+                }
+              }
+            }
+          }
+        });
+
+        // Emit message to receiver's user room
+        io.to(`user:${receiverId}`).emit('new-message', message);
+
+        // Create notification for receiver
+        await prisma.notification.create({
+          data: {
+            userId: receiverId,
+            kind: 'NEW_MESSAGE',
+            payload: {
+              messageId: message.id,
+              senderId: aSocket.userId,
+              senderName: message.sender.profile?.displayName || message.sender.name,
+              content: message.content.substring(0, 100)
+            }
+          }
+        });
+
+        // Emit notification to receiver
+        io.to(`user:${receiverId}`).emit('notification', {
+          type: 'NEW_MESSAGE',
+          message: `New message from ${message.sender.profile?.displayName || message.sender.name}`
+        });
+
+      } catch (error) {
+        console.error('Error sending direct message:', error);
         aSocket.emit('error', { message: 'Failed to send message' });
       }
     });

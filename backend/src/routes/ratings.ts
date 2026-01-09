@@ -198,6 +198,62 @@ router.get('/user/:userId', async (req, res) => {
   }
 });
 
+// Get ratings given by a user
+router.get('/given/:userId', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const { userId } = req.params;
+    const raterId = req.user?.userId;
+
+    if (!raterId || raterId !== userId) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+
+    const { page = '1', limit = '10' } = req.query;
+    const pageNum = parseInt(page as string);
+    const limitNum = parseInt(limit as string);
+    const skip = (pageNum - 1) * limitNum;
+
+    const [ratings, totalCount] = await Promise.all([
+      prisma.rating.findMany({
+        where: { raterId: userId },
+        include: {
+          rated: {
+            select: {
+              id: true,
+              name: true,
+              avatarUrl: true,
+              profile: {
+                select: {
+                  displayName: true
+                }
+              }
+            }
+          }
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limitNum
+      }),
+      prisma.rating.count({
+        where: { raterId: userId }
+      })
+    ]);
+
+    res.json({
+      ratings,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total: totalCount,
+        pages: Math.ceil(totalCount / limitNum)
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching given ratings:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Get user's reputation score and badge
 router.get('/user/:userId/reputation', async (req, res) => {
   try {

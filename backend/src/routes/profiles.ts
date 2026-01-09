@@ -23,8 +23,13 @@ router.get("/", async (req: AuthRequest, res: Response) => {
     
     const where: any = {
       AND: [
-        query ? { OR: [{ displayName: { contains: query, mode: "insensitive" } }, { bio: { contains: query, mode: "insensitive" } }] } : {},
-        location ? { location: { contains: location, mode: "insensitive" } } : {},
+        query ? { 
+          OR: [
+            { displayName: { contains: query } }, 
+            { bio: { contains: query } }
+          ] 
+        } : {},
+        location ? { location: { contains: location } } : {},
       ],
     };
 

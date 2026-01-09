@@ -4,12 +4,12 @@ import { getPrisma } from "../lib/prisma";
 
 const router = Router();
 
-// GET /wallet/balance -> compute from LedgerEntry (EARNED - SPENT)
+// GET /wallet/balance -> compute from LedgerEntry (EARNED - SPENT) and return user credits
 router.get("/balance", authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) return res.status(401).json({ error: "User not authenticated" });
     const prisma = getPrisma();
-    const [earnedAgg, spentAgg] = await Promise.all([
+    const [earnedAgg, spentAgg, user] = await Promise.all([
       prisma.ledgerEntry.aggregate({
         _sum: { hours: true },
         where: { userId: req.user.userId, type: "EARNED" }
@@ -17,12 +17,17 @@ router.get("/balance", authMiddleware, async (req: AuthRequest, res: Response) =
       prisma.ledgerEntry.aggregate({
         _sum: { hours: true },
         where: { userId: req.user.userId, type: "SPENT" }
+      }),
+      prisma.user.findUnique({
+        where: { id: req.user.userId },
+        select: { credits: true }
       })
     ]);
     const earned = Number(earnedAgg._sum.hours || 0);
     const spent = Number(spentAgg._sum.hours || 0);
     const balance = +(earned - spent).toFixed(2);
-    return res.json({ balance, earned, spent });
+    const credits = user ? Number(user.credits) || 0 : 0;
+    return res.json({ balance, earned, spent, credits });
   } catch (err) {
     console.error("Error computing balance:", err);
     return res.status(500).json({ error: "Failed to compute balance" });

@@ -17,6 +17,75 @@ const sendMessageSchema = z.object({
   message: "Either receiverId or requestId must be provided"
 });
 
+// Get direct messages between two users (without requestId)
+router.get('/direct/:userId', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user?.userId;
+    const otherUserId = req.params.userId;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    if (userId === otherUserId) {
+      return res.status(400).json({ error: 'Cannot message yourself' });
+    }
+
+    // Verify other user exists
+    const otherUser = await prisma.user.findUnique({
+      where: { id: otherUserId }
+    });
+
+    if (!otherUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Get all direct messages between these two users (no requestId)
+    const messages = await prisma.message.findMany({
+      where: {
+        requestId: null,
+        OR: [
+          { senderId: userId, receiverId: otherUserId },
+          { senderId: otherUserId, receiverId: userId }
+        ]
+      },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            name: true,
+            avatarUrl: true,
+            profile: {
+              select: {
+                displayName: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    // Mark messages as read
+    await prisma.message.updateMany({
+      where: {
+        requestId: null,
+        senderId: otherUserId,
+        receiverId: userId,
+        readAt: null
+      },
+      data: {
+        readAt: new Date()
+      }
+    });
+
+    res.json(messages);
+  } catch (error) {
+    console.error('Error fetching direct messages:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Send a message
 router.post('/', authMiddleware, async (req: AuthRequest, res) => {
   try {
@@ -52,7 +121,19 @@ router.post('/', authMiddleware, async (req: AuthRequest, res) => {
       messageData.requestId = validatedData.requestId;
       messageData.receiverId = timeRequest.senderId === userId ? timeRequest.receiverId : timeRequest.senderId;
     } else if (validatedData.receiverId) {
-      // Direct message
+      // Direct message - verify receiver exists
+      const receiver = await prisma.user.findUnique({
+        where: { id: validatedData.receiverId }
+      });
+
+      if (!receiver) {
+        return res.status(404).json({ error: 'Receiver not found' });
+      }
+
+      if (userId === validatedData.receiverId) {
+        return res.status(400).json({ error: 'Cannot message yourself' });
+      }
+
       messageData.receiverId = validatedData.receiverId;
     }
 
@@ -69,7 +150,7 @@ router.post('/', authMiddleware, async (req: AuthRequest, res) => {
       }
     });
 
-    // Create notification for receiver
+    // Create notification for receiver, including senderId so frontend can link correctly
     if (message.receiverId) {
       await prisma.notification.create({
         data: {
@@ -77,8 +158,10 @@ router.post('/', authMiddleware, async (req: AuthRequest, res) => {
           kind: 'NEW_MESSAGE',
           payload: {
             messageId: message.id,
+            senderId: message.senderId,
             senderName: message.sender.name,
-            content: message.content.substring(0, 100)
+            content: message.content.substring(0, 100),
+            requestId: message.requestId || null
           }
         }
       });
@@ -147,6 +230,55 @@ router.get('/conversation/:requestId', authMiddleware, async (req: AuthRequest, 
     res.json(messages);
   } catch (error) {
     console.error('Error fetching messages:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get users who sent messages to current user
+router.get('/senders', authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.user?.userId;
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    // Get unique senders who have sent messages to current user
+    const messages = await prisma.message.findMany({
+      where: {
+        receiverId: userId,
+        requestId: null // Only direct messages
+      },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            avatarUrl: true,
+            profile: {
+              select: {
+                displayName: true,
+                location: true,
+                ratingAvg: true,
+                avatarUrl: true
+              }
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      distinct: ['senderId']
+    });
+
+    // Get unique senders
+    const uniqueSenders = Array.from(
+      new Map(messages.map(m => [m.senderId, m.sender])).values()
+    );
+
+    res.json({ users: uniqueSenders });
+  } catch (error) {
+    console.error('Error fetching message senders:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

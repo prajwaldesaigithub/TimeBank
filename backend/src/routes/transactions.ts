@@ -108,7 +108,11 @@ router.get('/history', authMiddleware, async (req: AuthRequest, res) => {
     const formattedTransactions = transactions.map(transaction => ({
       ...transaction,
       isIncoming: transaction.receiverId === userId,
-      otherUser: transaction.senderId === userId ? transaction.receiver : transaction.sender
+      otherUser: transaction.senderId === userId ? transaction.receiver : transaction.sender,
+      // Convert String amount to number for display
+      amount: Number(transaction.amount) || 0,
+      hours: transaction.type === 'EARNED' || transaction.type === 'SPENT' ? Number(transaction.amount) || 0 : undefined,
+      credits: transaction.type === 'BONUS' || transaction.type === 'TRANSFER' ? Number(transaction.amount) || 0 : undefined
     }));
 
     res.json({
@@ -138,12 +142,22 @@ router.post('/buy-credits', authMiddleware, async (req: AuthRequest, res) => {
 
     // In a real implementation, you would integrate with a payment processor
     // For now, we'll just add the credits directly
+    // Get current user credits (stored as String in SQLite)
+    const currentUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { credits: true }
+    });
+
+    if (!currentUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const newCredits = (Number(currentUser.credits) + validatedData.amount).toFixed(2);
+    
     const user = await prisma.user.update({
       where: { id: userId },
       data: {
-        credits: {
-          increment: validatedData.amount
-        }
+        credits: newCredits
       }
     });
 
@@ -151,7 +165,8 @@ router.post('/buy-credits', authMiddleware, async (req: AuthRequest, res) => {
     const transaction = await prisma.transaction.create({
       data: {
         senderId: userId,
-        amount: validatedData.amount,
+        receiverId: userId,
+        amount: String(validatedData.amount.toFixed(2)),
         type: 'BONUS', // In real app, this would be 'PURCHASE'
         status: 'COMPLETED',
         description: `Purchased ${validatedData.amount} credits`,
@@ -200,48 +215,86 @@ router.post('/transfer', authMiddleware, async (req: AuthRequest, res) => {
       return res.status(404).json({ error: 'Receiver not found' });
     }
 
-    // Check if sender has enough credits
+    // Check if sender has enough credits (credits stored as String in SQLite)
     const sender = await prisma.user.findUnique({
-      where: { id: userId }
+      where: { id: userId },
+      select: { credits: true }
     });
 
-    if (!sender || sender.credits < amount) {
+    if (!sender) {
+      return res.status(404).json({ error: 'Sender not found' });
+    }
+
+    const senderCredits = Number(sender.credits) || 0;
+    if (senderCredits < amount) {
       return res.status(400).json({ error: 'Insufficient credits' });
     }
 
     // Perform the transfer
     await prisma.$transaction(async (tx) => {
-      // Deduct from sender
+      // Get current balances
+      const senderUser = await tx.user.findUnique({ where: { id: userId }, select: { credits: true } });
+      const receiverUser = await tx.user.findUnique({ where: { id: receiverId }, select: { credits: true } });
+
+      if (!senderUser || !receiverUser) {
+        throw new Error('User not found');
+      }
+
+      // Calculate new balances (credits are stored as String)
+      const newSenderCredits = (Number(senderUser.credits) - amount).toFixed(2);
+      const newReceiverCredits = (Number(receiverUser.credits) + amount).toFixed(2);
+
+      // Update balances
       await tx.user.update({
         where: { id: userId },
-        data: {
-          credits: {
-            decrement: amount
-          }
-        }
+        data: { credits: newSenderCredits }
       });
 
-      // Add to receiver
       await tx.user.update({
         where: { id: receiverId },
-        data: {
-          credits: {
-            increment: amount
-          }
-        }
+        data: { credits: newReceiverCredits }
       });
 
-      // Create transaction record
-      await tx.transaction.create({
-        data: {
-          senderId: userId,
-          receiverId: receiverId,
-          amount: amount,
-          type: 'TRANSFER',
-          status: 'COMPLETED',
-          description: description || 'Credit transfer',
-          completedAt: new Date()
-        }
+      // Create transaction records for both users
+      await tx.transaction.createMany({
+        data: [
+          {
+            senderId: userId,
+            receiverId: receiverId,
+            amount: String(amount.toFixed(2)),
+            type: 'TRANSFER',
+            status: 'COMPLETED',
+            description: description || 'Credit transfer',
+            completedAt: new Date()
+          },
+          {
+            senderId: userId,
+            receiverId: receiverId,
+            amount: String(amount.toFixed(2)),
+            type: 'TRANSFER',
+            status: 'COMPLETED',
+            description: description || 'Credit received',
+            completedAt: new Date()
+          }
+        ]
+      });
+
+      // Create ledger entries for both users
+      await tx.ledgerEntry.createMany({
+        data: [
+          {
+            userId: userId,
+            hours: String(amount.toFixed(2)),
+            type: 'SPENT',
+            description: description || `Transfer to user ${receiverId.substring(0, 8)}`
+          },
+          {
+            userId: receiverId,
+            hours: String(amount.toFixed(2)),
+            type: 'EARNED',
+            description: description || `Transfer from user ${userId.substring(0, 8)}`
+          }
+        ]
       });
     });
 
@@ -261,7 +314,7 @@ router.post('/transfer', authMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
-// Get transaction statistics
+// Get transaction statistics - Uses LedgerEntry for accurate earned/spent stats
 router.get('/stats', authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.user?.userId;
@@ -269,38 +322,27 @@ router.get('/stats', authMiddleware, async (req: AuthRequest, res) => {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
+    // Use LedgerEntry for accurate earned/spent calculations (this is the source of truth)
     const [
-      totalEarned,
-      totalSpent,
-      totalTransferred,
+      totalEarnedLedger,
+      totalSpentLedger,
       completedTransactions,
-      pendingTransactions
+      pendingTransactions,
+      user
     ] = await Promise.all([
-      prisma.transaction.aggregate({
+      prisma.ledgerEntry.aggregate({
         where: {
-          receiverId: userId,
-          type: 'EARNED',
-          status: 'COMPLETED'
+          userId: userId,
+          type: 'EARNED'
         },
-        _sum: { amount: true }
+        _sum: { hours: true }
       }),
-      prisma.transaction.aggregate({
+      prisma.ledgerEntry.aggregate({
         where: {
-          senderId: userId,
-          type: 'SPENT',
-          status: 'COMPLETED'
+          userId: userId,
+          type: 'SPENT'
         },
-        _sum: { amount: true }
-      }),
-      prisma.transaction.aggregate({
-        where: {
-          OR: [
-            { senderId: userId, type: 'TRANSFER' },
-            { receiverId: userId, type: 'TRANSFER' }
-          ],
-          status: 'COMPLETED'
-        },
-        _sum: { amount: true }
+        _sum: { hours: true }
       }),
       prisma.transaction.count({
         where: {
@@ -319,15 +361,28 @@ router.get('/stats', authMiddleware, async (req: AuthRequest, res) => {
           ],
           status: 'PENDING'
         }
+      }),
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { credits: true, reputation: true }
       })
     ]);
 
+    // Calculate totals from ledger entries (hours are stored as String in SQLite)
+    const earnedAmount = totalEarnedLedger._sum.hours ? 
+      (typeof totalEarnedLedger._sum.hours === 'string' ? Number(totalEarnedLedger._sum.hours) : totalEarnedLedger._sum.hours) : 0;
+    const spentAmount = totalSpentLedger._sum.hours ? 
+      (typeof totalSpentLedger._sum.hours === 'string' ? Number(totalSpentLedger._sum.hours) : totalSpentLedger._sum.hours) : 0;
+
     res.json({
-      totalEarned: totalEarned._sum.amount || 0,
-      totalSpent: totalSpent._sum.amount || 0,
-      totalTransferred: totalTransferred._sum.amount || 0,
+      credits: user?.credits ? Number(user.credits) : 0,
+      reputation: user?.reputation || 0,
+      totalEarned: earnedAmount,
+      totalSpent: spentAmount,
       completedTransactions,
-      pendingTransactions
+      pendingTransactions,
+      averageRating: 0, // Will be calculated from ratings if needed
+      totalRatings: 0
     });
   } catch (error) {
     console.error('Error fetching transaction stats:', error);

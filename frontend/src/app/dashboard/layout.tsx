@@ -2,6 +2,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import DashboardHeaderLogo from "../components/DashboardHeaderLogo";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -12,7 +13,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   useEffect(() => {
     const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-    if (!token) { router.replace("/login"); return; }
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
     abortRef.current?.abort();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -23,30 +27,39 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
           signal: ctrl.signal,
         });
-        if (!res.ok) { localStorage.removeItem("token"); router.replace("/login"); return; }
+        if (!res.ok) {
+          localStorage.removeItem("token");
+          router.replace("/login");
+          return;
+        }
         setReady(true);
       } catch (e: any) {
-        if (e?.name !== "AbortError") { localStorage.removeItem("token"); router.replace("/login"); }
+        if (e?.name !== "AbortError") {
+          localStorage.removeItem("token");
+          router.replace("/login");
+        }
       }
     })();
 
     return () => ctrl.abort();
   }, [router]);
 
+  // Simple loader while checking session; intro video is handled globally in AppLoader
   if (!ready) {
     return (
-      <div className="min-h-dvh relative overflow-hidden">
-        <div className="pointer-events-none absolute inset-0 -z-10 bg-hero-animated" />
-        <div className="pointer-events-none absolute inset-0 -z-10 bg-grid-slate-200/40 dark:bg-grid-slate-800/30" />
-        <main className="mx-auto max-w-6xl px-4 py-10">
-          <div className="rounded-3xl glass-card ring-glow p-8">
-            <div className="h-6 w-48 loading-shimmer rounded-md" />
-            <div className="mt-3 h-4 w-80 loading-shimmer rounded-md" />
-          </div>
-        </main>
+      <div className="min-h-dvh flex items-center justify-center bg-slate-950 text-slate-100">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-10 w-10 rounded-full border-2 border-slate-600 border-t-sky-400 animate-spin" />
+          <p className="text-sm text-slate-300">Loading your dashboard…</p>
+        </div>
       </div>
     );
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      <DashboardHeaderLogo />
+      {children}
+    </>
+  );
 }

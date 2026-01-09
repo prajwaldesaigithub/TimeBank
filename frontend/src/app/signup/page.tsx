@@ -79,6 +79,16 @@ export default function SignupPage() {
         setError(data?.error || "Signup failed.");
         return;
       }
+      
+      // Check if email verification is required
+      if (data.requiresVerification && !data.user?.isVerified) {
+        // Show verification message and redirect to verification page or show message
+        setError(null);
+        alert(`Account created! Please check your email (${email}) to verify your account before logging in.`);
+        router.push("/login?verify=true");
+        return;
+      }
+      
       localStorage.setItem("token", data.token);
       router.replace("/dashboard");
     } catch {

@@ -25,7 +25,7 @@ const nextConfig = {
               // Allow fonts
               "font-src 'self' https://fonts.gstatic.com data:",
               // Allow loading and autoplaying media from same-origin public folder
-              "media-src 'self' blob: data:",
+              "media-src 'self' blob: data: http://localhost:3000 https://localhost:3000",
               // Scripts
               "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
               // Disallow plugins
@@ -36,10 +36,10 @@ const nextConfig = {
               "base-uri 'self'",
             ].join("; "),
           },
-          // Hint browsers to allow autoplay for muted inline video
+          // Hint browsers to allow autoplay for video with sound
           {
             key: "Permissions-Policy",
-            value: "autoplay=(self)",
+            value: "autoplay=(self), camera=(), microphone=(), geolocation=()",
           },
           {
             key: "Referrer-Policy",

@@ -48,36 +48,77 @@ app.use(
   })
 );
 
-// Basic rate limiting
+// Basic rate limiting (skip auth/health; auth has its own limiter)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    const p = req.path || "";
+    return p === "/health" || p.startsWith("/auth") || p.startsWith("/api/auth");
+  },
 });
+
+// More lenient rate limiting for auth routes
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 2000, // Higher limit for login/signup
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 app.use(limiter);
 
-// CORS
-const allowedOrigins = new Set([
-  "http://localhost:3000",
-  "http://localhost:3001",
-  "http://localhost:3003",
-  "http://localhost:3004",
-  "http://localhost:3005",
-]);
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.has(origin) || /^http:\/\/localhost:\d+$/.test(origin)) {
+// CORS - More permissive for development
+const isDevelopment = process.env.NODE_ENV !== "production";
+
+const corsOptions = {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    // Allow requests with no origin (like mobile apps, Postman, or curl)
+    if (!origin) {
+      return callback(null, true);
+    }
+    
+    // In development, allow all localhost and local network origins
+    if (isDevelopment) {
+      // Match http://localhost, http://localhost:PORT, https://localhost, etc.
+      const localhostPattern = /^https?:\/\/localhost(:\d+)?$/;
+      const localhostIPPattern = /^https?:\/\/127\.0\.0\.1(:\d+)?$/;
+      const localNetworkPattern = /^https?:\/\/192\.168\.\d+\.\d+(:\d+)?$/;
+      
+      if (localhostPattern.test(origin) || 
+          localhostIPPattern.test(origin) ||
+          localNetworkPattern.test(origin)) {
         return callback(null, true);
       }
-      return callback(new Error("Not allowed by CORS"));
-    },
-    credentials: true,
-    optionsSuccessStatus: 200,
-  })
-);
+    }
+    
+    // Production: only allow specific origins
+    const allowedOrigins = new Set([
+      "http://localhost:3000",
+      "http://localhost:3001",
+      "http://localhost:3003",
+      "http://localhost:3004",
+      "http://localhost:3005",
+    ]);
+    
+    if (allowedOrigins.has(origin)) {
+      return callback(null, true);
+    }
+    
+    console.warn(`CORS blocked origin: ${origin}`);
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+  exposedHeaders: ["Content-Type", "Authorization"],
+  optionsSuccessStatus: 200,
+  maxAge: 86400, // 24 hours
+};
+
+app.use(cors(corsOptions));
 
 // Body parsing
 app.use(express.json({ limit: "10mb" }));
@@ -107,8 +148,9 @@ app.get("/health", (_req: Request, res: Response) => {
 });
 
 // API routes (with and without /api for compatibility with the frontend)
-app.use("/api/auth", authRoutes);
-app.use("/auth", authRoutes);
+// Auth routes with more lenient rate limiting
+app.use("/api/auth", authLimiter, authRoutes);
+app.use("/auth", authLimiter, authRoutes);
 
 app.use("/api/wallet", walletRoutes);
 app.use("/wallet", walletRoutes);

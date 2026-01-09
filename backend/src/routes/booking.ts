@@ -60,7 +60,37 @@ router.get("/", authMiddleware, async (req: AuthRequest, res: Response) => {
     else if (role === "receiver") where.receiverId = req.user.userId;
     else where.OR = [{ providerId: req.user.userId }, { receiverId: req.user.userId }];
     if (["PENDING", "ACCEPTED", "DECLINED", "CANCELLED", "COMPLETED"].includes(status)) where.status = status;
-    const bookings = await prisma.booking.findMany({ where, orderBy: { createdAt: "desc" }, take: 100 });
+    const bookings = await prisma.booking.findMany({ 
+      where, 
+      orderBy: { createdAt: "desc" }, 
+      take: 100,
+      include: {
+        provider: {
+          select: {
+            id: true,
+            name: true,
+            avatarUrl: true,
+            profile: {
+              select: {
+                displayName: true
+              }
+            }
+          }
+        },
+        receiver: {
+          select: {
+            id: true,
+            name: true,
+            avatarUrl: true,
+            profile: {
+              select: {
+                displayName: true
+              }
+            }
+          }
+        }
+      }
+    });
     return res.json({ bookings });
   } catch (err: any) {
     console.error("GET /booking error:", err);
@@ -134,7 +164,8 @@ router.patch("/:id/cancel", authMiddleware, async (req: AuthRequest, res: Respon
   }
 });
 
-// Completion flow (propose/confirm) simplified: confirm moves ledger atomically
+// Completion flow: mark booking completed, handle reputation + notifications.
+// Actual credit transfer and detailed time stats are handled by the wallet/transactions flow.
 router.post("/:id/complete-confirm", authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) return res.status(401).json({ error: "Unauthorized" });
@@ -145,63 +176,18 @@ router.post("/:id/complete-confirm", authMiddleware, async (req: AuthRequest, re
     // Only participants can confirm
     if (booking.providerId !== req.user.userId && booking.receiverId !== req.user.userId) return res.status(403).json({ error: "Forbidden" });
 
-    // Check receiver balance after SPENT
-    const [earnedAgg, spentAgg] = await Promise.all([
-      prisma.ledgerEntry.aggregate({ _sum: { hours: true }, where: { userId: booking.receiverId, type: "EARNED" } }),
-      prisma.ledgerEntry.aggregate({ _sum: { hours: true }, where: { userId: booking.receiverId, type: "SPENT" } }),
-    ]);
-    const current = Number(earnedAgg._sum.hours || 0) - Number(spentAgg._sum.hours || 0);
-    const hours = Number(booking.hours);
-    if (current - hours < 0) return res.status(400).json({ error: "Insufficient balance" });
-
     const result = await prisma.$transaction(async (tx) => {
       const updated = await tx.booking.update({ where: { id: booking.id }, data: { status: "COMPLETED", completedAt: new Date() } });
-      const hoursStr = String(hours.toFixed(2));
-      
-      // Create ledger entries for both users
-      await tx.ledgerEntry.createMany({
-        data: [
-          { userId: booking.providerId, hours: hoursStr, type: "EARNED", description: "Session completed", refBookingId: booking.id },
-          { userId: booking.receiverId, hours: hoursStr, type: "SPENT", description: "Session completed", refBookingId: booking.id },
-        ],
-      });
-      
-      // Create Transaction records for both users (for transaction history)
-      await tx.transaction.createMany({
-        data: [
-          {
-            senderId: booking.receiverId,
-            receiverId: booking.providerId,
-            amount: hoursStr,
-            type: "SPENT",
-            status: "COMPLETED",
-            description: `Time session: ${booking.category}`,
-            referenceId: booking.id,
-            completedAt: new Date(),
-          },
-          {
-            senderId: booking.receiverId,
-            receiverId: booking.providerId,
-            amount: hoursStr,
-            type: "EARNED",
-            status: "COMPLETED",
-            description: `Time session: ${booking.category}`,
-            referenceId: booking.id,
-            completedAt: new Date(),
-          },
-        ],
-      });
       
       // Reputation updates: +10 provider, +5 receiver
       await tx.user.update({ where: { id: booking.providerId }, data: { reputation: { increment: 10 } } });
       await tx.user.update({ where: { id: booking.receiverId }, data: { reputation: { increment: 5 } } });
+      
       // Notifications
       await tx.notification.createMany({
         data: [
           { userId: booking.providerId, kind: "BOOKING_COMPLETED", payload: { bookingId: booking.id } },
           { userId: booking.receiverId, kind: "BOOKING_COMPLETED", payload: { bookingId: booking.id } },
-          { userId: booking.providerId, kind: "CREDIT_EARNED", payload: { hours } },
-          { userId: booking.receiverId, kind: "CREDIT_SPENT", payload: { hours } },
         ] as any,
       });
       return updated;
